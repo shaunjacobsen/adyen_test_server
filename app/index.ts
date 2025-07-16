@@ -46,7 +46,7 @@ const determineHostUrl = (req: Request) => {
     return `${forwardedProto}://${forwardedHost}`;
   }
 
-  return 'http://localhost:5143';
+  return 'http://localhost:5173';
 };
 
 async function encryptCardDetails(
@@ -100,21 +100,54 @@ app.post('/api/payment_methods', async (req: Request, res: Response) => {
 
 app.post('/api/payments', async (req: Request, res: Response) => {
   // part 2 of the advanced checkout flow
-  const { data, amount, reference } = req.body;
-  try {
-    const response = await adyenServer.post('/payments', {
-      merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT,
-      amount,
-      reference,
-      ...data,
-    });
+  const { data, amount, reference, returnUrl } = req.body;
 
-    return res.json(response.data);
-  } catch (err: any) {
-    console.log(err);
-    console.error(`Error: ${err.message}, error code: ${err.errorCode}`);
-    res.status(err.statusCode).json(err.message);
-  }
+  const paymentRequest = {
+    amount,
+    reference,
+    ...data,
+    returnUrl,
+    merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
+  };
+
+  const checkoutApi = new CheckoutAPI(adyenClient);
+  const response = await checkoutApi.PaymentsApi.payments(paymentRequest, {
+    idempotencyKey: uuid(),
+  });
+
+  return res.json(response);
+
+  // try {
+  //   const response = await adyenServer.post('/payments', {
+  //     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT,
+  //     amount,
+  //     reference,
+  //     ...data,
+  //     ...paymentMethod,
+  //   });
+
+  //   return res.json(response.data);
+  // } catch (err: any) {
+  //   console.log(err);
+  //   console.error(`Error: ${err.message}, error code: ${err.errorCode}`);
+  //   res.status(Number(err.status) ?? 500).json(err.message);
+  // }
+});
+
+// step 3 of advanced flow
+app.post('/api/payment_details', async (req: Request, res: Response) => {
+  const { redirectResult } = req.body;
+  const paymentDetailsRequest = {
+    details: { redirectResult: decodeURI(redirectResult) },
+  };
+
+  const checkoutApi = new CheckoutAPI(adyenClient);
+  const response = await checkoutApi.PaymentsApi.paymentsDetails(
+    paymentDetailsRequest,
+    { idempotencyKey: uuid() },
+  );
+
+  return res.json(response);
 });
 
 app.post('/api/session', async (req: Request, res: Response) => {
@@ -135,7 +168,7 @@ app.post('/api/session', async (req: Request, res: Response) => {
       merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT ?? '',
       returnUrl: `${determineHostUrl(
         req,
-      )}/redirect?order_reference=${order_reference}`, // required for 3ds2 redirect flow
+      )}/post_payment?order_reference=${order_reference}`, // required for 3ds2 redirect flow
       lineItems: items,
     });
 
